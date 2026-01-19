@@ -10,6 +10,8 @@ export default defineContentScript({
     "*://*.claude.ai/*",
     "*://*.gemini.google.com/*",
     "*://gemini.google.com/*",
+    "*://*.doubao.com/*",
+    "*://doubao.com/*",
   ],
   main() {
     console.log("AI Assistant content script loaded");

@@ -3,12 +3,14 @@ import type { SiteDetector } from "../types/site";
 import { ChatGPTDetector } from "./chatgpt";
 import { ClaudeDetector } from "./claude";
 import { GeminiDetector } from "./gemini";
+import { DoubaoDetector } from "./doubao";
 
 export class DetectorFactory {
   private static detectors: SiteDetector[] = [
     new ChatGPTDetector(),
     new ClaudeDetector(),
     new GeminiDetector(),
+    new DoubaoDetector(),
   ];
 
   /**

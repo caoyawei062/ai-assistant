@@ -18,7 +18,7 @@ export default defineBackground(() => {
     const { StorageService } = await import("../services/storageService");
     const storageService = new StorageService();
     await storageService.saveConfig({
-      enabledSites: ["chatgpt", "claude", "gemini"],
+      enabledSites: ["chatgpt", "claude", "gemini", "doubao"],
       messageActions: [
         { type: "copy", label: "复制", icon: "📋", enabled: true },
         { type: "quote", label: "引用", icon: "💬", enabled: true },

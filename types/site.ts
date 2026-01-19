@@ -3,6 +3,7 @@ export type SiteType =
   | "chatgpt"
   | "claude"
   | "gemini"
+  | "doubao"
   | "perplexity"
   | "deepseek";
 
