@@ -41,10 +41,11 @@ export class MessageService {
    * 监听URL变化
    */
   private observeUrlChanges(): void {
-    // 定期检查URL变化（更可靠的方式）
+    // 定期检查URL变化（作为备用方案）
     setInterval(() => {
       const currentUrl = window.location.href;
       if (currentUrl !== this.lastUrlCheck) {
+        console.log("[AI Assistant] URL change detected via polling");
         this.handleUrlChange();
         this.lastUrlCheck = currentUrl;
       }
@@ -55,9 +56,32 @@ export class MessageService {
 
     // 使用 popstate 事件监听浏览器前进/后退
     window.addEventListener("popstate", () => {
+      console.log("[AI Assistant] URL change detected via popstate");
       this.handleUrlChange();
       this.lastUrlCheck = window.location.href;
     });
+
+    // 监听 pushState 和 replaceState (SPA 路由)
+    const originalPushState = history.pushState.bind(history);
+    const originalReplaceState = history.replaceState.bind(history);
+
+    history.pushState = (...args) => {
+      originalPushState(...args);
+      console.log("[AI Assistant] URL change detected via pushState");
+      setTimeout(() => {
+        this.handleUrlChange();
+        this.lastUrlCheck = window.location.href;
+      }, 100);
+    };
+
+    history.replaceState = (...args) => {
+      originalReplaceState(...args);
+      console.log("[AI Assistant] URL change detected via replaceState");
+      setTimeout(() => {
+        this.handleUrlChange();
+        this.lastUrlCheck = window.location.href;
+      }, 100);
+    };
   }
 
   /**
@@ -80,6 +104,9 @@ export class MessageService {
 
       // 通知 background 和 popup 清空消息列表
       this.notifyConversationChanged();
+
+      // 等待 DOM 加载完成(SPA 页面切换需要时间渲染)
+      await new Promise(resolve => setTimeout(resolve, 800));
 
       // 重新加载消息
       await this.loadMessages();

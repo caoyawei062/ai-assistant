@@ -7,10 +7,14 @@ import { generateMessageId, extractConversationId } from "./url";
  * 从元素中提取消息内容
  */
 export function extractMessageContent(element: HTMLElement): string {
+  // 统计 Gemini 生成的图片数量
+  const generatedImages = element.querySelectorAll('generated-image');
+  const imageCount = generatedImages.length;
+
   // 移除按钮、工具栏等干扰元素
   const clone = element.cloneNode(true) as HTMLElement;
 
-  // 移除不需要的元素
+  // 移除不需要的元素(包括图片相关的容器)
   const selectorsToRemove = [
     "button",
     '[role="button"]',
@@ -18,13 +22,25 @@ export function extractMessageContent(element: HTMLElement): string {
     ".actions",
     ".copy-button",
     ".edit-button",
+    // Gemini 图片相关元素
+    "generated-image",
+    ".generated-images",
+    ".attachment-container",
   ];
 
   selectorsToRemove.forEach((selector) => {
     clone.querySelectorAll(selector).forEach((el) => el.remove());
   });
 
-  return clone.textContent?.trim() || "";
+  const textContent = clone.textContent?.trim() || "";
+
+  // 如果有生成的图片,添加 [图片] 或 [图片 x N] 标记
+  if (imageCount > 0) {
+    const imageLabel = imageCount > 1 ? `[图片 x ${imageCount}]` : "[图片]";
+    return textContent ? `${textContent}\n${imageLabel}` : imageLabel;
+  }
+
+  return textContent;
 }
 
 /**
@@ -44,11 +60,11 @@ export function parseMessageElement(
 
   // 使用稳定的消息 ID：
   // 1. 优先使用元素上已有的 data-message-id
-  // 2. 否则基于内容生成稳定的哈希 ID
+  // 2. 否则基于内容、索引等信息生成稳定的哈希 ID
   let messageId = element.getAttribute("data-message-id");
   if (!messageId) {
-    // 基于内容和角色生成稳定的 ID
-    messageId = generateStableMessageId(content, role, site);
+    // 基于内容、角色和索引生成稳定的 ID(索引确保相同内容的消息不会重复)
+    messageId = generateStableMessageId(content, role, site, index);
     // 立即设置到元素上，确保后续能找到
     element.setAttribute("data-message-id", messageId);
   }
@@ -68,11 +84,12 @@ export function parseMessageElement(
 }
 
 /**
- * 生成稳定的消息 ID（基于内容哈希）
+ * 生成稳定的消息 ID（基于内容哈希 + 索引）
  */
-function generateStableMessageId(content: string, role: string, site: string): string {
+function generateStableMessageId(content: string, role: string, site: string, index?: number): string {
   // 使用简单的哈希算法生成稳定 ID
-  const str = `${site}-${role}-${content.substring(0, 100)}`;
+  // 加入 index 确保相同内容的消息也有不同的 ID
+  const str = `${site}-${role}-${index ?? 0}-${content.substring(0, 100)}`;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
