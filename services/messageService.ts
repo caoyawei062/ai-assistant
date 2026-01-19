@@ -3,12 +3,15 @@ import type { Message, MessagePair, MessageAction } from "../types/message";
 import { DetectorFactory } from "../detectors";
 import { generateMessageId, extractConversationId } from "../utils/url";
 import { createElement, highlightElement } from "../utils/dom";
+import { messageEventBus, MESSAGES_EVENTS } from "../utils/eventBus";
 
 export class MessageService {
   private detector = DetectorFactory.detectCurrentSite();
   private messages: Map<string, Message> = new Map();
   private messageElements: Map<string, HTMLElement> = new Map();
   private currentConversationId: string | null = null;
+  private lastUrlCheck: string = "";
+  private messageUpdateTimer: number | null = null;
 
   /**
    * 初始化消息服务
@@ -38,19 +41,22 @@ export class MessageService {
    * 监听URL变化
    */
   private observeUrlChanges(): void {
+    // 定期检查URL变化（更可靠的方式）
+    setInterval(() => {
+      const currentUrl = window.location.href;
+      if (currentUrl !== this.lastUrlCheck) {
+        this.handleUrlChange();
+        this.lastUrlCheck = currentUrl;
+      }
+    }, 500); // 每500ms检查一次
+
+    // 初始化当前URL
+    this.lastUrlCheck = window.location.href;
+
     // 使用 popstate 事件监听浏览器前进/后退
     window.addEventListener("popstate", () => {
       this.handleUrlChange();
-    });
-
-    // 使用 MutationObserver 监听 DOM 变化（单页应用的路由变化）
-    const observer = new MutationObserver(() => {
-      this.handleUrlChange();
-    });
-
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
+      this.lastUrlCheck = window.location.href;
     });
   }
 
@@ -95,6 +101,11 @@ export class MessageService {
       }).catch((error) => {
         console.log("[AI Assistant] Failed to notify conversation change:", error);
       });
+
+      // 使用事件总线通知本地组件（Sidebar）
+      messageEventBus.emit(MESSAGES_EVENTS.CONVERSATION_CHANGED, {
+        conversationId: this.currentConversationId,
+      });
     } catch (error) {
       console.log("[AI Assistant] Failed to notify conversation change:", error);
     }
@@ -105,14 +116,21 @@ export class MessageService {
    */
   private notifyMessagesUpdated(): void {
     try {
-      // 发送消息到 background script
-      browser.runtime.sendMessage({
-        type: "MESSAGES_UPDATED",
+      const updateData = {
         conversationId: this.currentConversationId,
         messageCount: this.messages.size,
+      };
+
+      // 发送消息到 background script（用于 Popup）
+      browser.runtime.sendMessage({
+        type: "MESSAGES_UPDATED",
+        ...updateData,
       }).catch((error) => {
         console.log("[AI Assistant] Failed to notify messages update:", error);
       });
+
+      // 使用事件总线通知本地组件（Sidebar）
+      messageEventBus.emit(MESSAGES_EVENTS.MESSAGES_UPDATED, updateData);
     } catch (error) {
       console.log("[AI Assistant] Failed to notify messages update:", error);
     }
@@ -133,12 +151,14 @@ export class MessageService {
   private async loadMessages(): Promise<void> {
     if (!this.detector) return;
 
+    // 每次加载前先清空,避免追加旧对话的消息
+    this.messages.clear();
+    this.messageElements.clear();
+
     const messages = await this.detector.getMessages();
     messages.forEach((message) => {
-      // 更新或添加消息
       this.messages.set(message.id, message);
       if (message.element) {
-        // 更新元素映射（元素可能因为 DOM 刷新而变化）
         this.messageElements.set(message.id, message.element);
       }
     });
@@ -159,14 +179,18 @@ export class MessageService {
    * 观察新消息
    */
   private observeNewMessages(): void {
+    let debounceTimer: number | null = null;
+
     const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        mutation.addedNodes.forEach((node) => {
-          if (node instanceof HTMLElement) {
-            this.handleNewElement(node);
-          }
-        });
-      });
+      // 防抖处理，避免频繁触发
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+
+      debounceTimer = window.setTimeout(() => {
+        this.handleMutations(mutations);
+        debounceTimer = null;
+      }, 300); // 300ms 防抖
     });
 
     observer.observe(document.body, {
@@ -176,16 +200,100 @@ export class MessageService {
   }
 
   /**
-   * 处理新元素
+   * 处理DOM变化
    */
-  private handleNewElement(element: HTMLElement): void {
-    // 检查是否是消息元素
-    if (element.hasAttribute("data-message-id")) {
-      return; // 已经处理过
+  private handleMutations(mutations: MutationRecord[]): void {
+    // 清除之前的定时器
+    if (this.messageUpdateTimer) {
+      clearTimeout(this.messageUpdateTimer);
     }
 
-    // 这里可以添加逻辑来识别新消息
-    // 实际实现需要根据具体站点的 DOM 结构来调整
+    // 设置新的定时器（防抖）
+    this.messageUpdateTimer = window.setTimeout(async () => {
+      let hasNewMessages = false;
+
+      // 检查是否有新的消息元素
+      for (const mutation of mutations) {
+        mutation.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement) {
+            // 检查是否是消息容器或包含消息的元素
+            if (this.isMessageElement(node)) {
+              hasNewMessages = true;
+            }
+          }
+        });
+
+        if (hasNewMessages) break;
+      }
+
+      // 如果检测到新消息，重新加载并通知UI
+      if (hasNewMessages) {
+        console.log("[AI Assistant] New messages detected, reloading...");
+
+        const previousCount = this.messages.size;
+
+        // 重新加载消息
+        await this.loadMessages();
+
+        const newCount = this.messages.size;
+
+        // 只有消息数量变化时才通知UI
+        if (newCount !== previousCount) {
+          console.log(`[AI Assistant] Messages updated: ${previousCount} -> ${newCount}`);
+          this.notifyMessagesUpdated();
+        }
+      }
+
+      this.messageUpdateTimer = null;
+    }, 500); // 500ms 防抖
+  }
+
+  /**
+   * 检查元素是否是消息元素
+   */
+  private isMessageElement(element: HTMLElement): boolean {
+    // 根据当前站点使用不同的选择器
+    const site = this.detector?.detect();
+
+    const selectors: Record<string, string[]> = {
+      chatgpt: [
+        '[data-message-author-role]',
+        '[data-turn="assistant"]',
+        '[data-testid="conversation-turn"]',
+        'article[data-testid]',
+      ],
+      claude: [
+        '[data-is-streaming]',
+        '.font-claude-message',
+        '[data-testimonial="message"]',
+      ],
+      gemini: [
+        '[data-test-id="chat-turn"]',
+        '.model-turn',
+        '.conversation-turn',
+      ],
+      doubao: [
+        '[data-message-id]',
+        '.message-item',
+        '.chat-message',
+      ],
+    };
+
+    const siteSelectors = selectors[site || ""] || [];
+
+    // 检查元素本身或其子元素是否匹配选择器
+    for (const selector of siteSelectors) {
+      try {
+        if (element.matches(selector) || element.querySelector(selector)) {
+          return true;
+        }
+      } catch (e) {
+        // 忽略无效选择器
+        console.warn("[AI Assistant] Invalid selector:", selector);
+      }
+    }
+
+    return false;
   }
 
   /**

@@ -2,6 +2,7 @@ import { MessageService } from "../services/messageService";
 import { JumpService } from "../services/jumpService";
 import { StorageService } from "../services/storageService";
 import { DetectorFactory } from "../detectors";
+import { messageEventBus, MESSAGES_EVENTS } from "../utils/eventBus";
 
 export default defineContentScript({
   matches: [
@@ -20,6 +21,39 @@ export default defineContentScript({
     const messageService = new MessageService();
     const jumpService = new JumpService();
     const storageService = new StorageService();
+
+    // 🔑 关键：将 EventBus 挂载到 window 对象，使其在所有 content scripts 中共享
+    (window as any).__AI_ASSISTANT_EVENT_BUS__ = messageEventBus;
+    console.log("[AI Assistant] EventBus mounted to window");
+
+    // 暴露全局 API 供 Sidebar 使用
+    (window as any).__AI_ASSISTANT_API__ = {
+      getMessagePairs: async () => {
+        const pairs = await messageService.getMessagePairs();
+        // 移除 HTMLElement 属性
+        return pairs.map((pair) => {
+          const { user, assistant, ...rest } = pair;
+          const { element: userElement, ...userRest } = user;
+          const assistantRest = assistant ? (() => {
+            const { element: assistantElement, ...aRest } = assistant;
+            return aRest;
+          })() : undefined;
+          return {
+            ...rest,
+            user: userRest,
+            assistant: assistantRest
+          };
+        });
+      },
+      getEventBus: () => {
+        return messageEventBus;
+      },
+      getEvents: () => {
+        return MESSAGES_EVENTS;
+      }
+    };
+
+    console.log("[AI Assistant] Global API mounted to window");
 
     // 检测当前站点
     const detector = DetectorFactory.detectCurrentSite();
@@ -63,6 +97,14 @@ export default defineContentScript({
           // 移除 HTMLElement 属性，因为它无法通过消息 API 序列化
           const serializableMessages = messages.map(({ element, ...rest }: { element?: HTMLElement;[key: string]: any }) => rest);
           sendResponse({ success: true, data: serializableMessages });
+          break;
+
+        case "REGISTER_MESSAGE_UPDATE_CALLBACK":
+          // 注册 Sidebar 的消息更新回调
+          const callbackId = message.callbackId;
+          (window as any).__AI_ASSISTANT_MESSAGE_CALLBACKS__ = (window as any).__AI_ASSISTANT_MESSAGE_CALLBACKS__ || {};
+          (window as any).__AI_ASSISTANT_MESSAGE_CALLBACKS__[callbackId] = message.callback;
+          sendResponse({ success: true });
           break;
 
         case "GET_MESSAGE_PAIRS":

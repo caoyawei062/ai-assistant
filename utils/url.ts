@@ -34,8 +34,8 @@ export function extractConversationId(url: string): string | null {
   const claudeMatch = url.match(/\/chat\/([a-f0-9-]+)/);
   if (claudeMatch) return claudeMatch[1];
 
-  // Gemini: /conversation/[conversation-id]
-  const geminiMatch = url.match(/\/conversation\/([a-f0-9-]+)/);
+  // Gemini: /app/[conversation-id] (支持16进制字符)
+  const geminiMatch = url.match(/\/app\/([a-f0-9]+)/);
   if (geminiMatch) return geminiMatch[1];
 
   return null;

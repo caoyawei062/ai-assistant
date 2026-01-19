@@ -17,6 +17,7 @@ export function SidebarPanel() {
     const [pairs, setPairs] = useState<MessagePair[]>([]);
     const [loading, setLoading] = useState(false);
     const [hasLoaded, setHasLoaded] = useState(false);
+    const [eventBusReady, setEventBusReady] = useState(false);
     const leaveTimerRef = useRef<number | null>(null);
 
     // 处理鼠标进入
@@ -49,13 +50,17 @@ export function SidebarPanel() {
         if (loading) return;
         setLoading(true);
         try {
-            const response = await browser.runtime.sendMessage({
-                type: "GET_MESSAGE_PAIRS_FROM_PAGE",
-            });
-
-            if (response?.success && response.data) {
-                setPairs(response.data);
+            // 优先使用本地 API（更快）
+            const api = (window as any).__AI_ASSISTANT_API__;
+            if (api && api.getMessagePairs) {
+                console.log("[Sidebar] Loading messages via local API");
+                const pairs = await api.getMessagePairs();
+                setPairs(pairs || []);
                 setHasLoaded(true);
+            } else {
+                console.log("[Sidebar] API not ready, retrying...");
+                // API 还没准备好，稍后重试
+                setTimeout(() => loadMessages(), 500);
             }
         } catch (error) {
             console.error("[AI Assistant] Failed to load messages:", error);
@@ -71,25 +76,90 @@ export function SidebarPanel() {
         }
     }, [isExpanded, hasLoaded, loadMessages]);
 
+    // 检查 EventBus 是否准备好
+    useEffect(() => {
+        const checkEventBus = () => {
+            const eventBus = (window as any).__AI_ASSISTANT_EVENT_BUS__;
+            const api = (window as any).__AI_ASSISTANT_API__;
+
+            if (eventBus && api && api.getEvents) {
+                console.log("[Sidebar] EventBus is ready!");
+                setEventBusReady(true);
+                return true;
+            }
+            return false;
+        };
+
+        // 立即检查一次
+        if (checkEventBus()) return;
+
+        // 如果没准备好，定期检查
+        const interval = setInterval(() => {
+            if (checkEventBus()) {
+                clearInterval(interval);
+            }
+        }, 100);
+
+        return () => clearInterval(interval);
+    }, []);
+
     // 监听对话切换和消息更新事件
     useEffect(() => {
-        const handleMessage = (message: any) => {
+        if (!eventBusReady) {
+            console.log("[Sidebar] Waiting for EventBus to be ready...");
+            return;
+        }
+
+        console.log("[Sidebar] Setting up event listeners");
+
+        // 从 window 获取共享的 EventBus
+        const eventBus = (window as any).__AI_ASSISTANT_EVENT_BUS__;
+        const api = (window as any).__AI_ASSISTANT_API__;
+        const MESSAGES_EVENTS = api.getEvents();
+
+        // 1. 监听 browser.runtime 消息（来自 background，用于 Popup）
+        const handleRuntimeMessage = (message: any) => {
             if (message.type === "CONVERSATION_CHANGED") {
-                console.log("[Sidebar] Conversation changed, clearing messages");
-                setPairs([]); // 清空消息列表
-                setHasLoaded(false); // 重置加载状态
+                console.log("[Sidebar] Conversation changed (runtime), clearing messages");
+                setPairs([]);
+                setHasLoaded(false);
             } else if (message.type === "MESSAGES_UPDATED") {
-                console.log("[Sidebar] Messages updated, reloading");
-                loadMessages(); // 重新加载消息
+                console.log("[Sidebar] Messages updated (runtime), reloading");
+                loadMessages();
             }
         };
 
-        browser.runtime.onMessage.addListener(handleMessage);
+        browser.runtime.onMessage.addListener(handleRuntimeMessage);
+
+        // 2. 使用共享的 EventBus 监听本地事件（更可靠）
+        const unsubscribeMessagesUpdated = eventBus.on(
+            MESSAGES_EVENTS.MESSAGES_UPDATED,
+            // @ts-ignore - EventBus 类型推断问题
+            (data: { conversationId: string | null; messageCount: number }) => {
+                console.log("[Sidebar] Messages updated (eventBus), reloading:", data);
+                loadMessages();
+            }
+        );
+
+        const unsubscribeConversationChanged = eventBus.on(
+            MESSAGES_EVENTS.CONVERSATION_CHANGED,
+            // @ts-ignore - EventBus 类型推断问题
+            (data: { conversationId: string | null }) => {
+                console.log("[Sidebar] Conversation changed (eventBus), clearing messages:", data);
+                setPairs([]);
+                setHasLoaded(false);
+            }
+        );
+
+        console.log("[Sidebar] Event listeners registered successfully");
 
         return () => {
-            browser.runtime.onMessage.removeListener(handleMessage);
+            console.log("[Sidebar] Cleaning up event listeners");
+            browser.runtime.onMessage.removeListener(handleRuntimeMessage);
+            unsubscribeMessagesUpdated();
+            unsubscribeConversationChanged();
         };
-    }, [loadMessages]);
+    }, [eventBusReady, loadMessages]);
 
     // 跳转到消息
     const handleJump = (messageId: string) => {
