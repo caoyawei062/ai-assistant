@@ -71,6 +71,26 @@ export function SidebarPanel() {
         }
     }, [isExpanded, hasLoaded, loadMessages]);
 
+    // 监听对话切换和消息更新事件
+    useEffect(() => {
+        const handleMessage = (message: any) => {
+            if (message.type === "CONVERSATION_CHANGED") {
+                console.log("[Sidebar] Conversation changed, clearing messages");
+                setPairs([]); // 清空消息列表
+                setHasLoaded(false); // 重置加载状态
+            } else if (message.type === "MESSAGES_UPDATED") {
+                console.log("[Sidebar] Messages updated, reloading");
+                loadMessages(); // 重新加载消息
+            }
+        };
+
+        browser.runtime.onMessage.addListener(handleMessage);
+
+        return () => {
+            browser.runtime.onMessage.removeListener(handleMessage);
+        };
+    }, [loadMessages]);
+
     // 跳转到消息
     const handleJump = (messageId: string) => {
         const element = document.querySelector(

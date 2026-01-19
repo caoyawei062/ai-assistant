@@ -143,6 +143,34 @@ export default defineBackground(() => {
         }
         return { success: false, data: [] };
 
+      case "CONVERSATION_CHANGED":
+        // 对话切换时，广播到所有监听者（如 popup）
+        console.log("[Background] Conversation changed:", message.conversationId);
+        // 广播消息到所有扩展页面
+        try {
+          await browser.runtime.sendMessage({
+            type: "CONVERSATION_CHANGED",
+            conversationId: message.conversationId,
+          });
+        } catch (error) {
+          // 忽略错误（可能没有监听器）
+        }
+        return { success: true };
+
+      case "MESSAGES_UPDATED":
+        // 消息更新时，广播到所有监听者
+        console.log("[Background] Messages updated:", message.messageCount, "messages");
+        try {
+          await browser.runtime.sendMessage({
+            type: "MESSAGES_UPDATED",
+            conversationId: message.conversationId,
+            messageCount: message.messageCount,
+          });
+        } catch (error) {
+          // 忽略错误（可能没有监听器）
+        }
+        return { success: true };
+
       default:
         return { success: false, error: "Unknown message type" };
     }

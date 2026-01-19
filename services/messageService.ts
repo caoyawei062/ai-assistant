@@ -8,6 +8,7 @@ export class MessageService {
   private detector = DetectorFactory.detectCurrentSite();
   private messages: Map<string, Message> = new Map();
   private messageElements: Map<string, HTMLElement> = new Map();
+  private currentConversationId: string | null = null;
 
   /**
    * 初始化消息服务
@@ -18,8 +19,112 @@ export class MessageService {
       return;
     }
 
+    // 记录当前对话ID
+    this.currentConversationId = this.extractConversationId();
+
     await this.loadMessages();
     this.observeNewMessages();
+    this.observeUrlChanges();
+  }
+
+  /**
+   * 提取当前对话ID
+   */
+  private extractConversationId(): string | null {
+    return extractConversationId(window.location.href);
+  }
+
+  /**
+   * 监听URL变化
+   */
+  private observeUrlChanges(): void {
+    // 使用 popstate 事件监听浏览器前进/后退
+    window.addEventListener("popstate", () => {
+      this.handleUrlChange();
+    });
+
+    // 使用 MutationObserver 监听 DOM 变化（单页应用的路由变化）
+    const observer = new MutationObserver(() => {
+      this.handleUrlChange();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+  }
+
+  /**
+   * 处理URL变化
+   */
+  private async handleUrlChange(): Promise<void> {
+    const newConversationId = this.extractConversationId();
+
+    // 如果对话ID发生变化,重新加载消息
+    if (newConversationId !== this.currentConversationId) {
+      console.log("[AI Assistant] Conversation changed:", {
+        old: this.currentConversationId,
+        new: newConversationId,
+      });
+
+      this.currentConversationId = newConversationId;
+
+      // 清空旧消息缓存
+      this.clearMessages();
+
+      // 通知 background 和 popup 清空消息列表
+      this.notifyConversationChanged();
+
+      // 重新加载消息
+      await this.loadMessages();
+
+      // 通知消息已更新
+      this.notifyMessagesUpdated();
+    }
+  }
+
+  /**
+   * 通知对话已切换
+   */
+  private notifyConversationChanged(): void {
+    try {
+      // 发送消息到 background script
+      browser.runtime.sendMessage({
+        type: "CONVERSATION_CHANGED",
+        conversationId: this.currentConversationId,
+      }).catch((error) => {
+        console.log("[AI Assistant] Failed to notify conversation change:", error);
+      });
+    } catch (error) {
+      console.log("[AI Assistant] Failed to notify conversation change:", error);
+    }
+  }
+
+  /**
+   * 通知消息已更新
+   */
+  private notifyMessagesUpdated(): void {
+    try {
+      // 发送消息到 background script
+      browser.runtime.sendMessage({
+        type: "MESSAGES_UPDATED",
+        conversationId: this.currentConversationId,
+        messageCount: this.messages.size,
+      }).catch((error) => {
+        console.log("[AI Assistant] Failed to notify messages update:", error);
+      });
+    } catch (error) {
+      console.log("[AI Assistant] Failed to notify messages update:", error);
+    }
+  }
+
+  /**
+   * 清空消息缓存
+   */
+  private clearMessages(): void {
+    this.messages.clear();
+    this.messageElements.clear();
+    console.log("[AI Assistant] Message cache cleared");
   }
 
   /**

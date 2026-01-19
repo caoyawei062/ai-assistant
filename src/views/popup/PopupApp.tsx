@@ -30,6 +30,23 @@ export function PopupApp() {
 
     useEffect(() => {
         loadData();
+
+        // 监听对话切换和消息更新事件
+        const handleMessage = (message: any) => {
+            if (message.type === "CONVERSATION_CHANGED") {
+                console.log("[Popup] Conversation changed, clearing messages");
+                setPairs([]); // 清空消息列表
+            } else if (message.type === "MESSAGES_UPDATED") {
+                console.log("[Popup] Messages updated, reloading");
+                loadData(); // 重新加载消息
+            }
+        };
+
+        browser.runtime.onMessage.addListener(handleMessage);
+
+        return () => {
+            browser.runtime.onMessage.removeListener(handleMessage);
+        };
     }, []);
 
     const loadData = async () => {
